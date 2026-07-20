@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="findcalls_banner.png" alt="FindCalls — an automated pipeline tracking calls for papers across five academic publishers" width="100%">
+</p>
+
 <h1 align="center">FindCalls</h1>
 
 <p align="center">
@@ -12,13 +16,13 @@
 
 ---
 
-Academic calls for papers (CFPs) live on publisher portals built on wildly different tech: static HTML, AJAX pagination, WordPress REST APIs, and aggressively bot-protected platforms. Checking them by hand is a weekly chore. **CFP Radar** handles all five in a single run — using the lightest technique that actually works for each — normalizes everything into one schema, and answers the only question that matters between runs: *what's new?*
+Academic calls for papers (CFPs) live on publisher portals built on wildly different tech: static HTML, AJAX pagination, WordPress REST APIs, and aggressively bot-protected platforms. Checking them by hand is a weekly chore. **FindCalls** handles all five in a single run — using the lightest technique that actually works for each — normalizes everything into one schema, and answers the only question that matters between runs: *what's new?*
 
 Built by a defense operations-research analyst to stop manually refreshing a dozen journal pages. Initial index: **4,230 unique CFPs** across **5 sources**.
 
 ## Highlights
 
-- **Single entry point.** `cfp_radar_all.py` runs every crawler and the merge. No other files needed.
+- **Single entry point.** `findcalls.py` runs every crawler and the merge. No other files needed.
 - **Five sources, three fetch strategies** — pure REST, headed Playwright, and a Cloudflare-bypassing stealth browser — each matched to the site's actual defenses.
 - **Diff on every run.** A first-seen registry means each run surfaces only newly posted calls, not the whole haystack.
 - **Fault-isolated stages.** If one site is down or blocks you, that stage is skipped and the rest still produce output.
@@ -63,15 +67,15 @@ Requires Python 3.10+ and Google Chrome installed (for the `nodriver` stages).
 Run everything:
 
 ```bash
-python cfp_radar_all.py
+python findcalls.py
 ```
 
 Run only some stages (comma-separated: `tandf`, `cfplist`, `sciencedirect`, `sage`, `watchlist`, `master`):
 
 ```bash
-python cfp_radar_all.py --only tandf,master   # quick refresh: re-pull T&F, re-merge
-python cfp_radar_all.py --skip sciencedirect  # skip the interactive stages
-python cfp_radar_all.py --only master         # just re-merge existing CSVs
+python findcalls.py --only tandf,master   # quick refresh: re-pull T&F, re-merge
+python findcalls.py --skip sciencedirect  # skip the interactive stages
+python findcalls.py --only master         # just re-merge existing CSVs
 ```
 
 **Two stages open a browser window** and may need a moment of help:
@@ -92,7 +96,7 @@ The console reports per-source counts and the number of **new CFPs since the las
 
 ## Configuration
 
-Everything you'd want to tune lives near the top of the relevant section in `cfp_radar_all.py`:
+Everything you'd want to tune lives near the top of the relevant section in `findcalls.py`:
 
 - **Relevance rules** — `TARGET_JOURNALS` and `TOPIC_KEYWORDS` regexes. Matching both → `★★`, either → `★`. Defaults target operations research, defense & security studies, and technology policy.
 - **Journal watchlists** — `SAGE_WATCHLIST` and `PUB_WATCHLIST` lists (publisher, name, journal code). Add or remove journals here.
