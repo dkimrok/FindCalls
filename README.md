@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="findcalls_banner.png" alt="FindCalls — an automated pipeline tracking calls for papers across five academic publishers" width="100%">
+  <img src="findcalls_banner.svg" alt="FindCalls — an automated pipeline tracking calls for papers across five academic publishers" width="100%">
 </p>
 
 <h1 align="center">FindCalls</h1>
