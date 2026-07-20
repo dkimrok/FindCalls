@@ -1,9 +1,4 @@
-# FindCalls - 
-<p align="center">
-  <img src="cfp_radar_banner.png" alt="CFP Radar — an automated pipeline tracking calls for papers across five academic publishers" width="100%">
-</p>
-
-<h1 align="center">CFP Radar</h1>
+<h1 align="center">FindCalls</h1>
 
 <p align="center">
   <b>One script that tracks academic calls for papers across five publisher ecosystems, merges them into a single sheet, and flags what's new since your last run.</b>
