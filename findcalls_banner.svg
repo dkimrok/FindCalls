@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-label="FindCalls — a monitoring pipeline that tracks calls for papers across five academic publishers">
+  <defs>
+    <radialGradient id="scope" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#16283A"/>
+      <stop offset="72%" stop-color="#101C26"/>
+      <stop offset="100%" stop-color="#0B141C"/>
+    </radialGradient>
+    <linearGradient id="sweep" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#7FD8C8" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#7FD8C8" stop-opacity="0.28"/>
+    </linearGradient>
+    <style>
+      .mono { font-family: "JetBrains Mono","Cascadia Code",Consolas,"SF Mono",monospace; }
+      .ink  { fill:#E9EEF2; }
+      .dim  { fill:#8FA6B8; }
+      .teal { fill:#7FD8C8; }
+      .amber{ fill:#E8A13D; }
+      @media (prefers-reduced-motion: reduce) {
+        .anim { animation: none !important; }
+        #sweepG { display: none; }
+      }
+      #sweepG { transform-origin: 400px 320px; animation: rot 14s linear infinite; }
+      @keyframes rot { to { transform: rotate(360deg); } }
+      .blip circle:first-child { animation: pulse 3.2s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+      @keyframes pulse { 0%{opacity:.55; transform:scale(.6)} 70%{opacity:0; transform:scale(2.1)} 100%{opacity:0} }
+    </style>
+  </defs>
+
+  <!-- background -->
+  <rect width="1280" height="640" fill="#0B141C"/>
+  <rect width="1280" height="640" fill="url(#scope)"/>
+
+  <!-- faint plotting grid -->
+  <g stroke="#22384A" stroke-width="1" opacity="0.5">
+    <path d="M0 160H1280M0 320H1280M0 480H1280"/>
+    <path d="M320 0V640M640 0V640M960 0V640"/>
+  </g>
+
+  <!-- ================= RADAR SCOPE (left) ================= -->
+  <g>
+    <!-- range rings -->
+    <g fill="none" stroke="#3A5A6E" stroke-width="1.4">
+      <circle cx="400" cy="320" r="70"/>
+      <circle cx="400" cy="320" r="140"/>
+      <circle cx="400" cy="320" r="210" stroke-dasharray="3 6"/>
+      <circle cx="400" cy="320" r="280" stroke-dasharray="2 8" opacity="0.7"/>
+    </g>
+    <!-- bearing ticks -->
+    <g stroke="#3A5A6E" stroke-width="1.4">
+      <path d="M400 40V56M400 584V600M120 320H136M664 320H680"/>
+      <path d="M598 122l-11 11M202 518l-11 11M202 122l11 11M598 518l11 11" opacity="0.8"/>
+    </g>
+    <!-- crosshair -->
+    <g stroke="#2C465A" stroke-width="1">
+      <path d="M400 46V594M126 320H674"/>
+    </g>
+
+    <!-- rotating sweep (class anim via id) -->
+    <g id="sweepG" class="anim">
+      <path d="M400 320 L400 44 A276 276 0 0 1 545 66 Z" fill="url(#sweep)"/>
+      <line x1="400" y1="320" x2="400" y2="44" stroke="#7FD8C8" stroke-width="2" opacity="0.85"/>
+    </g>
+
+    <!-- data-flow traces from blips to hub -->
+    <g fill="none" stroke="#7FD8C8" stroke-width="1.3" opacity="0.55">
+      <path d="M400 320 L268 176"/>
+      <path d="M400 320 L556 208"/>
+      <path d="M400 320 L214 372"/>
+      <path d="M400 320 L332 486"/>
+      <path d="M400 320 L560 436"/>
+    </g>
+
+    <!-- source blips -->
+    <g class="blip">
+      <circle cx="268" cy="176" r="8" fill="#E8A13D"/>
+      <circle cx="268" cy="176" r="5.5" fill="#E8A13D"/>
+    </g>
+    <g class="blip">
+      <circle cx="556" cy="208" r="8" fill="#E8A13D"/>
+      <circle cx="556" cy="208" r="5.5" fill="#E8A13D"/>
+    </g>
+    <g class="blip">
+      <circle cx="214" cy="372" r="8" fill="#E8A13D"/>
+      <circle cx="214" cy="372" r="5.5" fill="#E8A13D"/>
+    </g>
+    <g class="blip">
+      <circle cx="332" cy="486" r="8" fill="#E8A13D"/>
+      <circle cx="332" cy="486" r="5.5" fill="#E8A13D"/>
+    </g>
+    <g class="blip">
+      <circle cx="560" cy="436" r="8" fill="#E8A13D"/>
+      <circle cx="560" cy="436" r="5.5" fill="#E8A13D"/>
+    </g>
+
+    <!-- blip labels -->
+    <g class="mono dim" font-size="13.5" letter-spacing="0.4">
+      <text x="252" y="158" text-anchor="end">cfplist</text>
+      <text x="572" y="196">ScienceDirect</text>
+      <text x="198" y="378" text-anchor="end">T&amp;F&#160;API</text>
+      <text x="318" y="512" text-anchor="end">SAGE</text>
+      <text x="576" y="452">INFORMS&#160;/&#160;OUP</text>
+    </g>
+
+    <!-- central hub -->
+    <circle cx="400" cy="320" r="13" fill="#101C26" stroke="#7FD8C8" stroke-width="2.5"/>
+    <circle cx="400" cy="320" r="4.5" class="teal"/>
+    <text x="400" y="304" text-anchor="middle" class="mono teal" font-size="13" letter-spacing="1.2">MASTER&#160;+&#160;DIFF</text>
+
+    <!-- ring range labels -->
+    <g class="mono" fill="#4E6B80" font-size="11" letter-spacing="0.8">
+      <text x="406" y="256">R1</text>
+      <text x="406" y="186">R2</text>
+      <text x="406" y="116">R3</text>
+    </g>
+  </g>
+
+  <!-- ================= TITLE BLOCK (right) ================= -->
+  <g transform="translate(760,0)">
+    <!-- eyebrow -->
+    <g class="mono teal" font-size="14" letter-spacing="3.2">
+      <text x="0" y="196">AUTOMATED&#160;MONITORING&#160;PIPELINE</text>
+    </g>
+    <line x1="0" y1="212" x2="430" y2="212" stroke="#2C465A" stroke-width="1.4"/>
+
+    <!-- title -->
+    <text x="-4" y="286" class="mono ink" font-size="82" font-weight="700" letter-spacing="1">FindCalls</text>
+
+    <!-- subtitle -->
+    <text x="0" y="330" class="mono dim" font-size="19">Tracking&#160;special-issue&#160;calls&#160;for&#160;papers</text>
+    <text x="0" y="356" class="mono dim" font-size="19">across&#160;five&#160;academic&#160;publishers.</text>
+
+    <!-- spec readout -->
+    <g class="mono" font-size="15">
+      <text x="0"  y="416" class="amber">4,230</text>
+      <text x="58" y="416" class="dim">CFPs&#160;indexed</text>
+      <text x="0"  y="444" class="amber">5</text>
+      <text x="58" y="444" class="dim">sources,&#160;3&#160;fetch&#160;strategies</text>
+      <text x="0"  y="472" class="amber">&#916;</text>
+      <text x="58" y="472" class="dim">new-call&#160;detection&#160;on&#160;every&#160;run</text>
+    </g>
+
+    <!-- stack line -->
+    <text x="0" y="530" class="mono" fill="#4E6B80" font-size="13" letter-spacing="0.6">Python&#160;&#183;&#160;REST&#160;&#183;&#160;curl_cffi&#160;&#183;&#160;nodriver&#160;&#183;&#160;pandas</text>
+  </g>
+
+  <!-- corner frame marks -->
+  <g stroke="#3A5A6E" stroke-width="2" fill="none">
+    <path d="M28 52V28H52M1228 28h24v24M1252 588v24h-24M52 612H28v-24"/>
+  </g>
+</svg>
