@@ -1,131 +1,135 @@
 # FindCalls - 
-Find CFPs from Publishers
+<p align="center">
+  <img src="cfp_radar_banner.png" alt="CFP Radar — an automated pipeline tracking calls for papers across five academic publishers" width="100%">
+</p>
 
-**An automated pipeline that tracks special-issue calls for papers (CFPs) across five academic publishing ecosystems, merges them into a single master sheet, and flags newly posted calls on every run.**
+<h1 align="center">CFP Radar</h1>
 
-Academic CFPs are scattered across publisher portals with wildly different tech stacks — static HTML, AJAX pagination, WordPress REST APIs, and aggressively bot-protected platforms. CFP Radar treats each source with the lightest technique that actually works, normalizes everything into one schema, and answers the only question that matters between runs: *"What's new?"*
+<p align="center">
+  <b>One script that tracks academic calls for papers across five publisher ecosystems, merges them into a single sheet, and flags what's new since your last run.</b>
+</p>
 
-Built by a defense operations-research analyst to stop manually checking ten journal pages a week. As of the initial index: **4,230 unique CFPs** across **5 sources**.
+<p align="center">
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue">
+  <img alt="Sources: 5" src="https://img.shields.io/badge/sources-5-1F4E79">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green">
+</p>
 
 ---
 
-## Architecture
+Academic calls for papers (CFPs) live on publisher portals built on wildly different tech: static HTML, AJAX pagination, WordPress REST APIs, and aggressively bot-protected platforms. Checking them by hand is a weekly chore. **CFP Radar** handles all five in a single run — using the lightest technique that actually works for each — normalizes everything into one schema, and answers the only question that matters between runs: *what's new?*
+
+Built by a defense operations-research analyst to stop manually refreshing a dozen journal pages. Initial index: **4,230 unique CFPs** across **5 sources**.
+
+## Highlights
+
+- **Single entry point.** `cfp_radar_all.py` runs every crawler and the merge. No other files needed.
+- **Five sources, three fetch strategies** — pure REST, headed Playwright, and a Cloudflare-bypassing stealth browser — each matched to the site's actual defenses.
+- **Diff on every run.** A first-seen registry means each run surfaces only newly posted calls, not the whole haystack.
+- **Fault-isolated stages.** If one site is down or blocks you, that stage is skipped and the rest still produce output.
+- **Relevance tagging.** Two editable regexes score each CFP (`★★` / `★`) against your target journals and topics.
+
+## How it works
 
 ```
-┌─────────────┐  ┌──────────────┐  ┌─────────────┐  ┌───────────┐  ┌──────────────────┐
-│  cfplist.com │  │ ScienceDirect│  │ Taylor &     │  │   SAGE    │  │ Journal watchlist │
-│  (Playwright)│  │ (Playwright/ │  │ Francis      │  │ (nodriver │  │ INFORMS · OUP ·   │
-│              │  │  DOM capture)│  │ (WP REST API)│  │  + CF     │  │ Cambridge         │
-│              │  │              │  │              │  │  bypass)  │  │ (nodriver)        │
-└──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └─────┬─────┘  └────────┬─────────┘
-       │ CSV             │ CSV             │ CSV            │ CSV             │ CSV
-       └────────────┬────┴─────────────────┴────────────────┴─────────────────┘
-                    ▼
-             cfp_master.py  ──  normalize → dedupe (URL key) → relevance-tag
-                    │
-                    ├──► CFP_master.xlsx   [ New | Active & relevant | All ]
-                    └──► cfp_snapshot.json (first-seen registry → diff on next run)
+STAGE            SOURCE                       FETCH STRATEGY
+─────────────────────────────────────────────────────────────────────────
+tandf            Taylor & Francis             WordPress REST API (no browser)
+cfplist          cfplist.com                  Playwright, headless
+sciencedirect    ScienceDirect                Playwright, headed + DOM capture
+sage             SAGE journals                nodriver (Cloudflare-stealth)
+watchlist        INFORMS · OUP · Cambridge    nodriver, template-driven
+─────────────────────────────────────────────────────────────────────────
+master           →  normalize → dedupe (URL key) → relevance-tag → diff
+                 →  CFP_master.xlsx   +   cfp_snapshot.json
 ```
 
-## Source-by-source strategy
+Each publisher got the **minimum** machinery it required — escalating only when a simpler approach failed:
 
-Each source got the **minimum** machinery it required — escalating only when a simpler approach failed:
-
-| Source | Stack encountered | Technique used |
+| Source | Tech encountered | Strategy |
 |---|---|---|
-| cfplist.com | AJAX pagination (URL params ignored) | Playwright click-through, 23 pages |
-| ScienceDirect | React SPA, robots-disallowed, strong bot defense | Headed Playwright + network-response capture, DOM fallback (≈97% of listed CFPs recovered) |
-| Taylor & Francis | WordPress; listing UI is slow and stateful | **Discovered the underlying WP REST API** via network capture → pure `requests` pagination. No browser. 917 records, zero missing fields |
-| SAGE (Atypon) | TLS fingerprinting → 403 for `requests`; headless detection; Cloudflare Turnstile that defeats Playwright (CDP detection); **localized challenge pages** | `nodriver` (CDP-stealth browser) + locale-agnostic challenge detection + multi-variant CFP-URL discovery (`/cfp`, `/call-for-papers`, home-page link scan with plural-aware matching) |
-| INFORMS / OUP / Cambridge | Uniform per-journal CFP URL patterns (Atypon / Silverchair) | One config-driven watchlist crawler: URL templates + journal codes + auto-discovery fallback |
+| Taylor & Francis | Slow, stateful listing UI | Discovered the underlying **WP REST API** → plain pagination, no browser. Zero missing fields. |
+| cfplist.com | AJAX pagination (URL params ignored) | Headless Playwright click-through. |
+| ScienceDirect | React SPA, robots-disallowed, bot defense | Headed Playwright + network capture, DOM fallback. |
+| SAGE (Atypon) | TLS fingerprinting, headless detection, **Cloudflare Turnstile** | `nodriver` + locale-agnostic challenge detection + multi-variant URL discovery. |
+| INFORMS / OUP / Cambridge | Uniform per-journal URL patterns | One config: URL templates + journal codes + auto-discovery fallback. |
 
-## Repository layout
-
-```
-cfplist_crawler.py            # Source 1 — cfplist.com (Playwright)
-sciencedirect_cfp_crawler.py  # Source 2 — ScienceDirect (Playwright, dual-strategy)
-tandf_cfp_api.py              # Source 3 — Taylor & Francis (REST API, recommended)
-tandf_cfp_crawler.py          #   └ legacy browser version (kept for reference)
-sage_cfp_crawler_v7.py        # Source 4 — SAGE (nodriver; v1–v6 document the escalation)
-watchlist_cfp_crawler.py      # Source 5 — INFORMS / OUP / Cambridge journal watchlist
-cfp_master.py                 # Merge + dedupe + relevance tags + diff
-cfp_snapshot.json             # First-seen registry (do not delete)
-CFP_master.xlsx               # Output: [New] [Active & relevant] [All]
-```
-
-## Requirements
-
-- Python 3.10+
-- Google Chrome installed (for the `nodriver`-based crawlers)
+## Install
 
 ```bash
 pip install requests curl_cffi nodriver playwright beautifulsoup4 pandas openpyxl
 playwright install chromium
 ```
 
+Requires Python 3.10+ and Google Chrome installed (for the `nodriver` stages).
+
 ## Usage
 
-**1. Refresh the sources** (each writes its own CSV to the working directory):
+Run everything:
 
 ```bash
-python tandf_cfp_api.py             # fastest — pure API, ~1 min
-python sciencedirect_cfp_crawler.py # browser window opens; press Enter when the list loads
-python cfplist_crawler.py
-python sage_cfp_crawler_v7.py       # browser window opens; click the Cloudflare
-                                    # checkbox if prompted — manual clicks work
-                                    # under nodriver
-python watchlist_cfp_crawler.py
+python cfp_radar_all.py
 ```
 
-You don't need all five every time; `cfp_master.py` picks up whichever CSVs are present.
-
-**2. Rebuild the master and see what's new:**
+Run only some stages (comma-separated: `tandf`, `cfplist`, `sciencedirect`, `sage`, `watchlist`, `master`):
 
 ```bash
-python cfp_master.py
+python cfp_radar_all.py --only tandf,master   # quick refresh: re-pull T&F, re-merge
+python cfp_radar_all.py --skip sciencedirect  # skip the interactive stages
+python cfp_radar_all.py --only master         # just re-merge existing CSVs
 ```
 
-Console output reports per-source counts and the number of **new CFPs since the last run**; `CFP_master.xlsx` opens with three sheets:
+**Two stages open a browser window** and may need a moment of help:
+- `sciencedirect` — press **Enter** in the console once the list has loaded.
+- `sage` — if a Cloudflare checkbox appears, click it in the window (manual clicks work under `nodriver`).
+
+For an unattended run, use `--skip sciencedirect,sage`.
+
+The console reports per-source counts and the number of **new CFPs since the last run**. Results land in `CFP_master.xlsx`:
 
 | Sheet | Contents |
 |---|---|
 | `New` | CFPs first seen in this run, relevance-sorted |
-| `Active & relevant` | Open calls matching the target-journal / topic rules |
+| `Active & relevant` | Open calls matching your target-journal / topic rules |
 | `All` | Full deduplicated index with status (open / closed / unknown) |
 
-**3. Tune relevance to your field.** Edit two regexes at the top of `cfp_master.py` (`TARGET_JOURNALS`, `TOPIC_KEYWORDS`). Matching both earns `★★`, either one `★`. The defaults are tuned for operations research, defense & security studies, and technology policy.
+> `cfp_snapshot.json` is the first-seen registry that powers the diff. Keep it next to the script — **don't delete it** between runs.
+
+## Configuration
+
+Everything you'd want to tune lives near the top of the relevant section in `cfp_radar_all.py`:
+
+- **Relevance rules** — `TARGET_JOURNALS` and `TOPIC_KEYWORDS` regexes. Matching both → `★★`, either → `★`. Defaults target operations research, defense & security studies, and technology policy.
+- **Journal watchlists** — `SAGE_WATCHLIST` and `PUB_WATCHLIST` lists (publisher, name, journal code). Add or remove journals here.
 
 ## Anti-bot engineering notes
 
-The SAGE crawler went through seven versions; the failure chain is a compact case study in modern bot defense, so it's documented here:
+The SAGE stage went through seven iterations. The failure chain is a compact tour of modern bot defense:
 
-1. **`requests` + spoofed User-Agent → 403.** Atypon fingerprints the TLS handshake; headers are irrelevant.
-2. **Headless Chromium (Playwright) → 403.** `HeadlessChrome` UA token and `navigator.webdriver` give it away.
-3. **Headed Chromium → Cloudflare Turnstile loops forever**, even with a human clicking the checkbox: Turnstile detects the CDP (DevTools protocol) connection Playwright relies on.
-4. **`nodriver` passes** — but a subtle bug remained: challenge pages are **served in the visitor's locale**. Detection keyed on English strings ("Just a moment…") silently accepted Korean challenge pages ("잠시만 기다리십시오…") as content. Fix: detect via the `<title>` tag across locales plus challenge-only script variables — and *not* via `/cdn-cgi/challenge-platform`, which Cloudflare injects into legitimate pages too.
-5. Final touches that mattered: date parsing for ordinal formats ("30th September, 2026"), plural-aware link discovery ("Call**s** for Papers"), and scoping deadline extraction to each entry's nearest container so one section's date doesn't propagate to every item.
+1. **`requests` + spoofed User-Agent → 403.** The platform fingerprints the TLS handshake; headers are irrelevant.
+2. **Headless Chromium → 403.** The `HeadlessChrome` UA token and `navigator.webdriver` flag give it away.
+3. **Headed Chromium → Cloudflare Turnstile loops forever**, even with a human clicking — Turnstile detects the CDP connection Playwright relies on.
+4. **`nodriver` passes** — but challenge pages are served **in the visitor's locale**, so detection keyed on English strings silently accepted a Korean challenge page as real content. Fix: detect via the `<title>` tag across locales plus challenge-only variables — and *not* via `/cdn-cgi/challenge-platform`, which Cloudflare injects into legitimate pages too.
+5. Final touches: ordinal date parsing ("30th September, 2026"), plural-aware link discovery ("Call**s** for Papers"), and scoping deadline extraction to each entry's nearest container so one section's date doesn't bleed onto every item.
 
 ## Responsible use
 
-- Built for **personal research monitoring**: low volume, 1.5–3 s delays between requests, no parallelism, no paywalled content — only public CFP announcement pages.
-- Some target sites disallow automated access in `robots.txt` or their terms of service. Review each site's terms and your local regulations before running the corresponding crawler; consider official channels (e-mail alerts, RSS, publisher APIs) where they exist.
-- Do not redistribute collected listings; deadlines change and stale mirrors mislead authors.
+- Built for **personal research monitoring**: low volume, 1.5–3 s delays, no parallelism, public CFP pages only — nothing behind a paywall.
+- Some sites disallow automated access in `robots.txt` or their terms. Review each site's terms and your local regulations before running the corresponding stage, and prefer official channels (e-mail alerts, RSS, publisher APIs) where they exist.
+- Don't redistribute collected listings; deadlines change and stale mirrors mislead authors.
 
 ## Known limitations
 
-- Central listing pages at some publishers are manually curated and incomplete; per-journal watchlists compensate.
-- Top-tier venues (e.g., *JCR*, *JPR*, *ISQ*, *International Affairs*) run **no open CFPs** by policy — special issues are assembled via guest-editor proposals. A crawler correctly returns nothing there; monitor these via regular submission or by proposing a themed issue yourself.
-- `cf_clearance` cookies and site markup change; expect occasional selector maintenance. Every crawler dumps raw HTML for any page it fails to parse, so fixes are diff-driven rather than guesswork.
+- Some publishers' central listing pages are manually curated and incomplete; per-journal watchlists compensate.
+- Top venues (e.g. *JCR*, *JPR*, *ISQ*, *International Affairs*) run **no open CFPs** by policy — special issues are assembled via guest-editor proposals, so a crawler correctly returns nothing there. Reach these through regular submission, or by proposing a themed issue yourself.
+- Site markup and `cf_clearance` cookies change; expect occasional selector maintenance. Every stage dumps raw HTML to `debug_html/` for any page it can't parse, so fixes are diff-driven rather than guesswork.
 
 ## Roadmap
 
-- Springer / Wiley journal-ID watchlists (templates already wired)
+- Springer / Wiley journal-ID watchlists (templates already wired in)
 - Scheduled runs + e-mail/Slack digest of the `New` sheet
 - Per-paper matching: rank open calls against a manuscript abstract
 
-## Author
+## License
 
-**Duncan Kim** — operations research & technology policy researcher.
-*Python · web-data engineering · MILP/LP optimization · defense analytics.*
-
-License: MIT (crawl responsibly).
+MIT — crawl responsibly.
