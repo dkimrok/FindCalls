@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="findcalls_banner.svg" alt="FindCalls — an automated pipeline tracking calls for papers across five academic publishers" width="100%">
+  <img src="findcalls_banner.png" alt="FindCalls — an automated pipeline tracking calls for papers across five academic publishers" width="100%">
 </p>
 
 <h1 align="center">FindCalls</h1>
@@ -70,17 +70,30 @@ Run everything:
 python findcalls.py
 ```
 
-Run only some stages (comma-separated: `tandf`, `cfplist`, `sciencedirect`, `sage`, `watchlist`, `master`):
+**Re-crawl a single source.** Each source has its own flag. This is the common case — a stage timed out, got blocked, or you just want fresh data from one publisher without re-running the others:
 
 ```bash
-python findcalls.py --only tandf,master   # quick refresh: re-pull T&F, re-merge
-python findcalls.py --skip sciencedirect  # skip the interactive stages
-python findcalls.py --only master         # just re-merge existing CSVs
+python findcalls.py --sciencedirect          # re-pull ScienceDirect, then re-merge
+python findcalls.py --sciencedirect --sage   # re-pull several sources
 ```
+
+Re-crawling a source updates only that source's CSV; the other sources' CSVs are left untouched, so the merge always reflects the most recent pull of *every* source. The `master` stage runs automatically after a per-source re-crawl so `CFP_master.xlsx` stays in sync — add `--no-master` to skip that.
+
+**Other selectors:**
+
+```bash
+python findcalls.py --master                 # just re-merge existing CSVs, no crawling
+python findcalls.py --only tandf,master      # run a specific subset
+python findcalls.py --skip sciencedirect,sage  # run everything except these
+```
+
+Available stages: `tandf`, `cfplist`, `sciencedirect`, `sage`, `watchlist`, `master`. Flag priority is per-source flags → `--only` → default (all).
 
 **Two stages open a browser window** and may need a moment of help:
 - `sciencedirect` — press **Enter** in the console once the list has loaded.
 - `sage` — if a Cloudflare checkbox appears, click it in the window (manual clicks work under `nodriver`).
+
+If you miss the timing on ScienceDirect and it collects nothing, the previous good CSV is **kept, not overwritten** — just re-run that one source with `python findcalls.py --sciencedirect`.
 
 For an unattended run, use `--skip sciencedirect,sage`.
 
@@ -92,7 +105,22 @@ The console reports per-source counts and the number of **new CFPs since the las
 | `Active & relevant` | Open calls matching your target-journal / topic rules |
 | `All` | Full deduplicated index with status (open / closed / unknown) |
 
-> `cfp_snapshot.json` is the first-seen registry that powers the diff. Keep it next to the script — **don't delete it** between runs.
+### Files it writes
+
+| File | Role | Safe to delete? |
+|---|---|---|
+| `CFP_master.xlsx` | The output workbook (three sheets) | Yes — regenerated every run |
+| `*_cfps.csv` / `cfplist_all.csv` | Per-source intermediate data | Yes, but that source drops out of the merge until you re-crawl it |
+| `cfp_snapshot.json` | First-seen registry powering the `New` diff | **No** — deleting it makes the next run flag *everything* as new |
+
+### Resilience
+
+The pipeline is built so a single flaky source can't sink a run:
+
+- **Stages are isolated.** If a crawler stage throws, it's logged and skipped; the remaining stages still run and `master` merges whatever sources succeeded.
+- **Empty or corrupt CSVs are tolerated.** The merge reads each source defensively — a missing, zero-byte, header-only, or unparseable CSV is skipped with a warning instead of crashing the merge.
+- **A failed crawl won't clobber good data.** If ScienceDirect collects nothing (e.g. the page didn't load in time), it preserves the existing CSV rather than overwriting it with an empty file — so your last good pull survives and one `--sciencedirect` re-run restores the full index.
+
 
 ## Configuration
 
