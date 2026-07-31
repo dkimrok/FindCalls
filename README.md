@@ -1,29 +1,29 @@
 <p align="center">
-  <img src="findcalls_banner.png" alt="FindCalls — an automated pipeline tracking calls for papers across five academic publishers" width="100%">
+  <img src="findcalls_banner.png" alt="FindCalls — an automated pipeline tracking calls for papers across academic publishers and NLP conferences" width="100%">
 </p>
 
 <h1 align="center">FindCalls</h1>
 
 <p align="center">
-  <b>One script that tracks academic calls for papers across five publisher ecosystems, merges them into a single sheet, and flags what's new since your last run.</b>
+  <b>One script that tracks academic calls for papers across six sources — five journal publishers and the NLP conference circuit — merges them into a single sheet, and flags what's new since your last run.</b>
 </p>
 
 <p align="center">
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue">
-  <img alt="Sources: 5" src="https://img.shields.io/badge/sources-5-1F4E79">
+  <img alt="Sources: 6" src="https://img.shields.io/badge/sources-6-1F4E79">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green">
 </p>
 
 ---
 
-Academic calls for papers (CFPs) live on publisher portals built on wildly different tech: static HTML, AJAX pagination, WordPress REST APIs, and aggressively bot-protected platforms. Checking them by hand is a weekly chore. **FindCalls** handles all five in a single run — using the lightest technique that actually works for each — normalizes everything into one schema, and answers the only question that matters between runs: *what's new?*
+Academic calls for papers (CFPs) live on publisher portals built on wildly different tech: static HTML, AJAX pagination, WordPress REST APIs, and aggressively bot-protected platforms. Checking them by hand is a weekly chore. **FindCalls** handles all six in a single run — using the lightest technique that actually works for each — normalizes everything into one schema, and answers the only question that matters between runs: *what's new?*
 
-Built by a defense operations-research analyst to stop manually refreshing a dozen journal pages. Initial index: **4,230 unique CFPs** across **5 sources**.
+Built by a defense operations-research analyst to stop manually refreshing a dozen journal and conference pages. Initial index: **4,200+ unique CFPs** across **6 sources** — five journal publishers plus NLP conferences.
 
 ## Highlights
 
 - **Single entry point.** `findcalls.py` runs every crawler and the merge. No other files needed.
-- **Five sources, three fetch strategies** — pure REST, headed Playwright, and a Cloudflare-bypassing stealth browser — each matched to the site's actual defenses.
+- **Six sources, four fetch strategies** — pure REST, static table parsing, headed Playwright, and a Cloudflare-bypassing stealth browser — each matched to the site's actual defenses.
 - **Diff on every run.** A first-seen registry means each run surfaces only newly posted calls, not the whole haystack.
 - **Fault-isolated stages.** If one site is down or blocks you, that stage is skipped and the rest still produce output.
 - **Relevance tagging.** Two editable regexes score each CFP (`★★` / `★`) against your target journals and topics.
@@ -38,6 +38,7 @@ cfplist          cfplist.com                  Playwright, headless
 sciencedirect    ScienceDirect                Playwright, headed + DOM capture
 sage             SAGE journals                nodriver (Cloudflare-stealth)
 watchlist        INFORMS · OUP · Cambridge    nodriver, template-driven
+aclweb           ACL Portal (NLP venues)      requests (static sortable table)
 ─────────────────────────────────────────────────────────────────────────
 master           →  normalize → dedupe (URL key) → relevance-tag → diff
                  →  CFP_master.xlsx   +   cfp_snapshot.json
@@ -52,6 +53,7 @@ Each publisher got the **minimum** machinery it required — escalating only whe
 | ScienceDirect | React SPA, robots-disallowed, bot defense | Headed Playwright + network capture, DOM fallback. |
 | SAGE (Atypon) | TLS fingerprinting, headless detection, **Cloudflare Turnstile** | `nodriver` + locale-agnostic challenge detection + multi-variant URL discovery. |
 | INFORMS / OUP / Cambridge | Uniform per-journal URL patterns | One config: URL templates + journal codes + auto-discovery fallback. |
+| ACL Portal (NLP venues) | Static sortable HTML table, no bot defense | Plain `requests` + table parse. Chosen over the OpenReview API, which is submission-centric and doesn't expose deadlines. |
 
 ## Install
 
@@ -75,6 +77,7 @@ python findcalls.py
 ```bash
 python findcalls.py --sciencedirect          # re-pull ScienceDirect, then re-merge
 python findcalls.py --sciencedirect --sage   # re-pull several sources
+python findcalls.py --aclweb                  # refresh NLP conference CFPs, then re-merge
 ```
 
 Re-crawling a source updates only that source's CSV; the other sources' CSVs are left untouched, so the merge always reflects the most recent pull of *every* source. The `master` stage runs automatically after a per-source re-crawl so `CFP_master.xlsx` stays in sync — add `--no-master` to skip that.
@@ -87,7 +90,7 @@ python findcalls.py --only tandf,master      # run a specific subset
 python findcalls.py --skip sciencedirect,sage  # run everything except these
 ```
 
-Available stages: `tandf`, `cfplist`, `sciencedirect`, `sage`, `watchlist`, `master`. Flag priority is per-source flags → `--only` → default (all).
+Available stages: `tandf`, `cfplist`, `sciencedirect`, `sage`, `watchlist`, `aclweb`, `master`. Flag priority is per-source flags → `--only` → default (all).
 
 **Two stages open a browser window** and may need a moment of help:
 - `sciencedirect` — press **Enter** in the console once the list has loaded.
@@ -121,12 +124,22 @@ The pipeline is built so a single flaky source can't sink a run:
 - **Empty or corrupt CSVs are tolerated.** The merge reads each source defensively — a missing, zero-byte, header-only, or unparseable CSV is skipped with a warning instead of crashing the merge.
 - **A failed crawl won't clobber good data.** If ScienceDirect collects nothing (e.g. the page didn't load in time), it preserves the existing CSV rather than overwriting it with an empty file — so your last good pull survives and one `--sciencedirect` re-run restores the full index.
 
+### Cleaning up
+
+```bash
+python findcalls.py --delete       # remove CSVs, CFP_master.xlsx, debug_html/ — keeps the snapshot
+python findcalls.py --delete-all   # also removes cfp_snapshot.json (resets the diff history)
+python findcalls.py --delete --yes # skip the confirmation prompt
+```
+
+`--delete` clears the crawl outputs but **keeps `cfp_snapshot.json`**, so your first-seen history stays intact. Use `--delete-all` only when you want a clean slate — the next run will then flag every CFP as new. Both prompt for confirmation unless you pass `--yes`.
+
 
 ## Configuration
 
 Everything you'd want to tune lives near the top of the relevant section in `findcalls.py`:
 
-- **Relevance rules** — `TARGET_JOURNALS` and `TOPIC_KEYWORDS` regexes. Matching both → `★★`, either → `★`. Defaults target operations research, defense & security studies, and technology policy.
+- **Relevance rules** — `TARGET_JOURNALS` and `TOPIC_KEYWORDS` regexes. Matching both → `★★`, either → `★`. Defaults target operations research, defense & security studies, technology policy, and NLP/LLM research.
 - **Journal watchlists** — `SAGE_WATCHLIST` and `PUB_WATCHLIST` lists (publisher, name, journal code). Add or remove journals here.
 
 ## Anti-bot engineering notes
@@ -150,6 +163,7 @@ The SAGE stage went through seven iterations. The failure chain is a compact tou
 - Some publishers' central listing pages are manually curated and incomplete; per-journal watchlists compensate.
 - Top venues (e.g. *JCR*, *JPR*, *ISQ*, *International Affairs*) run **no open CFPs** by policy — special issues are assembled via guest-editor proposals, so a crawler correctly returns nothing there. Reach these through regular submission, or by proposing a themed issue yourself.
 - Site markup and `cf_clearance` cookies change; expect occasional selector maintenance. Every stage dumps raw HTML to `debug_html/` for any page it can't parse, so fixes are diff-driven rather than guesswork.
+- NLP conferences increasingly run on **ACL Rolling Review** (submit to ARR, then commit to a venue), so the `aclweb` stage captures posted CFP deadlines rather than the full two-step ARR cycle. For live ARR-round countdowns, the community site [aideadlin.es](https://aideadlin.es/?sub=NLP) with its `.ics` export is a good complement.
 
 ## Roadmap
 

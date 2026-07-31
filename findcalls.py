@@ -12,6 +12,8 @@ FindCalls — 올인원 실행 파일
   py findcalls.py --only tandf,master
   py findcalls.py --skip sciencedirect,cfplist
   py findcalls.py --master           # 기존 CSV만 재통합
+  py findcalls.py --delete           # 이전 산출물 삭제(스냅샷 보존)
+  py findcalls.py --delete-all       # 스냅샷까지 완전 초기화
 
 스테이지 (실행 순서):
   tandf         T&F WordPress REST API   (브라우저 불필요, ~1분)
@@ -19,6 +21,7 @@ FindCalls — 올인원 실행 파일
   sciencedirect ScienceDirect            (Playwright 창 + Enter 1회)
   sage          SAGE 중앙+저널           (nodriver 창, Cloudflare 수동클릭 가능)
   watchlist     INFORMS/OUP/Cambridge    (nodriver, sage와 브라우저 공유)
+  aclweb        ACL Portal(NLP 학회/워크숍) (requests, 정적 테이블)
   master        통합 + 관심태그 + diff   (CFP_master.xlsx / cfp_snapshot.json)
 
 플래그 우선순위: 개별 소스 플래그(--sciencedirect 등) > --only > 기본(전체).
@@ -671,7 +674,79 @@ def stage_watchlist():
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 스테이지 6: 마스터 통합 + diff (cfp_master.py 이식)
+# 스테이지 6: ACL Portal 이벤트 (NLP 학회/워크숍 CFP)
+#   aclweb.org/portal/events 는 정렬 가능한 정적 HTML 테이블 —
+#   제목·장소·도시·국가·게시일·제출마감·행사일 컬럼. 봇 차단 없음 → requests.
+#   ACL·EMNLP·NAACL·EACL·CoNLL 메인 + 워크숍/shared task CFP가 모두 게시됨.
+#   ※ 테이블에 마감일이 이미 구조화되어 있어 OpenReview API(제출물 중심,
+#     마감일 미제공)보다 이 소스가 목적에 부합.
+# ═══════════════════════════════════════════════════════════════════════
+ACL_EVENTS = "https://www.aclweb.org/portal/events"
+ACL_MAX_PAGES = 6          # 안전 상한 (현재 3페이지)
+
+
+def stage_aclweb():
+    import requests
+    headers = {"User-Agent": "Mozilla/5.0 (research use)"}
+    rows, seen = [], set()
+    for pg in range(0, ACL_MAX_PAGES):
+        url = ACL_EVENTS if pg == 0 else f"{ACL_EVENTS}?page={pg}"
+        try:
+            r = requests.get(url, headers=headers, timeout=45)
+            r.raise_for_status()
+        except Exception as e:
+            print(f"  페이지 {pg} 요청 실패({type(e).__name__}) — 중단")
+            break
+        soup = BeautifulSoup(r.text, "html.parser")
+        table = soup.find("table")
+        if not table:
+            break
+        body = table.find("tbody") or table
+        page_rows = 0
+        for tr in body.find_all("tr"):
+            cells = tr.find_all(["td", "th"])
+            if len(cells) < 7:
+                continue
+            link = cells[0].find("a", href=True)
+            title = cells[0].get_text(" ", strip=True)
+            href = urljoin(ACL_EVENTS, link["href"]) if link else ""
+            if not title or (href and href in seen):
+                continue
+            if href:
+                seen.add(href)
+            location = cells[1].get_text(" ", strip=True)
+            country = cells[3].get_text(" ", strip=True)
+            deadline_raw = cells[5].get_text(" ", strip=True)
+            event_dates = cells[6].get_text(" ", strip=True)
+            # 마감일 파싱: "31 Mar 2026" 형식
+            dt = pd.to_datetime(deadline_raw, format="%d %b %Y",
+                                errors="coerce")
+            rows.append({
+                "title": title,
+                "venue": (location or country).strip(),
+                "deadline_raw": deadline_raw,
+                "deadline_dt": dt,
+                "event_dates": event_dates,
+                "url": href,
+            })
+            page_rows += 1
+        print(f"  페이지 {pg + 1}: {page_rows}건 (누적 {len(rows)})")
+        # 다음 페이지 링크가 없으면 종료
+        if not soup.find("a", href=re.compile(rf"[?&]page={pg + 1}\b")):
+            break
+        time.sleep(1.5)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        print("  [경고] ACL Portal 0건 — 기존 CSV 보존, 저장 건너뜀.")
+        return
+    df = df.drop_duplicates(subset="url")
+    df.to_csv("aclweb_cfps.csv", index=False, encoding="utf-8-sig")
+    n_act = (df["deadline_dt"] >= pd.Timestamp.today().normalize()).sum()
+    print(f"  저장: aclweb_cfps.csv ({len(df)}건, 마감 유효 {n_act}건)")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 스테이지 7: 마스터 통합 + diff (cfp_master.py 이식)
 # ═══════════════════════════════════════════════════════════════════════
 SNAPSHOT = Path("cfp_snapshot.json")
 TARGET_JOURNALS = re.compile(
@@ -697,7 +772,11 @@ TOPIC_KEYWORDS = re.compile(
     r"vehicle routing|routing|scheduling|quantum|"
     r"energy (security|transition|polic)|critical infrastructure|"
     r"Korea|technology transfer|innovation polic|rare earth|"
-    r"critical mineral)", re.I)
+    r"critical mineral|"
+    # NLP/LLM 연구 라인 (ACL Portal 등 학회 CFP 대응)
+    r"natural language|\bNLP\b|computational lingu|language model|"
+    r"retrieval.augmented|\bRAG\b|question answer|multilingual|"
+    r"low.resource|evaluation|benchmark|agentic|multimodal)", re.I)
 MASTER_COLS = ["출처", "저널/주최", "제목", "초록마감", "원고마감", "마감원문",
                "상태", "관심", "최초관측", "URL"]
 
@@ -809,6 +888,18 @@ def _load_generic(path, label):
     return rows
 
 
+def _load_aclweb():
+    df = _safe_read_csv("aclweb_cfps.csv")
+    if df is None:
+        return []
+    return [{"출처": "ACL", "저널/주최": str(r.get("venue") or ""),
+             "제목": r.get("title", ""),
+             "초록마감": pd.NaT,
+             "원고마감": _to_dt(r.get("deadline_dt")),
+             "마감원문": str(r.get("deadline_raw") or ""),
+             "URL": r.get("url", "")} for _, r in df.iterrows()]
+
+
 def stage_master():
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -816,7 +907,8 @@ def stage_master():
 
     rows = (_load_cfplist() + _load_sd() + _load_tandf()
             + _load_generic("sage_cfps.csv", "SAGE")
-            + _load_generic("watchlist_cfps.csv", "Watchlist"))
+            + _load_generic("watchlist_cfps.csv", "Watchlist")
+            + _load_aclweb())
     if not rows:
         print("  입력 CSV가 없습니다 — 크롤러 스테이지를 먼저 실행하세요.")
         return
@@ -905,6 +997,82 @@ def stage_master():
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# 정리(cleanup) — 이전 실행 산출물 삭제
+# ═══════════════════════════════════════════════════════════════════════
+# 크롤러/통합이 생성하는 산출물 목록 (스냅샷은 별도 취급)
+OUTPUT_FILES = [
+    "cfplist_all.csv",
+    "sciencedirect_cfps.csv",
+    "tandf_cfps_v2.csv",
+    "sage_cfps.csv",
+    "watchlist_cfps.csv",
+    "aclweb_cfps.csv",
+    "CFP_master.xlsx",
+]
+OUTPUT_DIRS = ["debug_html"]
+SNAPSHOT_FILE = "cfp_snapshot.json"
+
+
+def stage_delete(include_snapshot=False, assume_yes=False):
+    """이전 실행 산출물을 삭제한다.
+    기본: CSV들 + CFP_master.xlsx + debug_html/ (스냅샷 보존).
+    include_snapshot=True: cfp_snapshot.json 까지 삭제 → diff 이력 초기화."""
+    import shutil
+
+    targets = [Path(f) for f in OUTPUT_FILES if Path(f).exists()]
+    dir_targets = [Path(d) for d in OUTPUT_DIRS if Path(d).is_dir()]
+    snap = Path(SNAPSHOT_FILE)
+    snap_hit = include_snapshot and snap.exists()
+
+    if not targets and not dir_targets and not snap_hit:
+        print("  삭제할 산출물이 없습니다.")
+        return
+
+    print("  삭제 대상:")
+    for p in targets:
+        print(f"    - {p.name}")
+    for d in dir_targets:
+        n = sum(1 for _ in d.rglob('*') if _.is_file())
+        print(f"    - {d.name}/  (파일 {n}개)")
+    if snap_hit:
+        print(f"    - {snap.name}  ⚠ diff 이력 초기화 "
+              f"(다음 실행에서 전체가 '신규'로 표시됨)")
+
+    if not assume_yes:
+        prompt = ("  정말 삭제할까요? "
+                  + ("[스냅샷 포함] " if snap_hit else "")
+                  + "되돌릴 수 없습니다 (y/N): ")
+        try:
+            ans = input(prompt).strip().lower()
+        except EOFError:
+            ans = ""
+        if ans not in ("y", "yes"):
+            print("  취소되었습니다.")
+            return
+
+    for p in targets:
+        try:
+            p.unlink()
+        except Exception as e:
+            print(f"    [실패] {p.name}: {e}")
+    for d in dir_targets:
+        try:
+            shutil.rmtree(d)
+        except Exception as e:
+            print(f"    [실패] {d.name}/: {e}")
+    if snap_hit:
+        try:
+            snap.unlink()
+        except Exception as e:
+            print(f"    [실패] {snap.name}: {e}")
+
+    print("  삭제 완료."
+          + ("" if include_snapshot
+             else f" (스냅샷 {SNAPSHOT_FILE} 은 보존 — "
+                  f"완전 초기화는 --delete-all)"))
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # 오케스트레이션
 # ═══════════════════════════════════════════════════════════════════════
 STAGES = [
@@ -913,6 +1081,7 @@ STAGES = [
     ("sciencedirect", stage_sciencedirect, "ScienceDirect (Playwright 창)"),
     ("sage", stage_sage, "SAGE (nodriver 창)"),
     ("watchlist", stage_watchlist, "INFORMS/OUP/Cambridge (nodriver)"),
+    ("aclweb", stage_aclweb, "ACL Portal (NLP 학회/워크숍, requests)"),
     ("master", stage_master, "마스터 통합 + diff"),
 ]
 
@@ -933,7 +1102,12 @@ def main():
             "  py findcalls.py --master           # 기존 CSV만 재통합\n"
             "\n개별 소스 플래그(--sciencedirect 등)로 특정 소스만 다시 받으면\n"
             "master를 자동으로 다시 실행해 결과(CFP_master.xlsx)에 반영합니다.\n"
-            "--no-master 로 그 자동 재통합을 끌 수 있습니다."))
+            "--no-master 로 그 자동 재통합을 끌 수 있습니다.\n"
+            "\n정리:\n"
+            "  py findcalls.py --delete       # 산출물(CSV·xlsx·debug_html) 삭제,\n"
+            "                                 #   스냅샷은 보존(diff 이력 유지)\n"
+            "  py findcalls.py --delete-all   # 위 + cfp_snapshot.json 까지 초기화\n"
+            "  py findcalls.py --delete --yes # 확인 프롬프트 없이 삭제"))
 
     # 개별 스테이지 플래그: --tandf --cfplist --sciencedirect --sage
     #                        --watchlist --master
@@ -944,7 +1118,20 @@ def main():
     ap.add_argument("--skip", help="쉼표구분: 이 스테이지들은 건너뜀")
     ap.add_argument("--no-master", action="store_true",
                     help="개별 소스 재크롤링 후 master 자동 재실행을 하지 않음")
+    ap.add_argument("--delete", action="store_true",
+                    help="이전 산출물(CSV·CFP_master.xlsx·debug_html) 삭제 "
+                         "(스냅샷 보존)")
+    ap.add_argument("--delete-all", action="store_true",
+                    help="이전 산출물 + cfp_snapshot.json 까지 완전 초기화")
+    ap.add_argument("--yes", "-y", action="store_true",
+                    help="삭제 확인 프롬프트를 건너뜀")
     args = ap.parse_args()
+
+    # 정리 옵션은 크롤링/통합보다 우선 처리하고 종료
+    if args.delete or args.delete_all:
+        print("\n=== [delete] 이전 실행 산출물 정리 ===")
+        stage_delete(include_snapshot=args.delete_all, assume_yes=args.yes)
+        return
 
     valid = {k for k, _, _ in STAGES}
 
