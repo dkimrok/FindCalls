@@ -7,6 +7,7 @@
 <p align="center">
   <b>One script that tracks academic calls for papers across six sources — five journal publishers and the NLP conference circuit — merges them into a single sheet, and flags what's new since your last run.</b>
 </p>
+
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21714795.svg)](https://doi.org/10.5281/zenodo.21714795)
 
 <p align="center">
