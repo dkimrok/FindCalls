@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21714795.svg)](https://doi.org/10.5281/zenodo.21714795)
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="Sources: 6" src="https://img.shields.io/badge/sources-6-1F4E79">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green">
