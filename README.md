@@ -8,13 +8,11 @@
   <b>One script that tracks academic calls for papers across six sources — five journal publishers and the NLP conference circuit — merges them into a single sheet, and flags what's new since your last run.</b>
 </p>
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21714795.svg)](https://doi.org/10.5281/zenodo.21714795)
-
 <p align="center">
-  <img alt="https://zenodo.org/badge/DOI/10.5281/zenodo.21714795.svg" src="https://doi.org/10.5281/zenodo.21714795">
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="Sources: 6" src="https://img.shields.io/badge/sources-6-1F4E79">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green">
+  <a href="https://doi.org/10.5281/zenodo.21714795"><img alt="DOI" src="https://zenodo.org/badge/DOI/10.5281/zenodo.21714795.svg"></a>
 </p>
 
 ---
