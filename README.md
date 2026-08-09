@@ -23,7 +23,7 @@ Built by a defense operations-research analyst to stop manually refreshing a doz
 ## Highlights
 
 - **Single entry point.** `findcalls.py` runs every crawler and the merge. No other files needed.
-- **Six sources, four fetch strategies** — pure REST, static table parsing, headed Playwright, and a Cloudflare-bypassing stealth browser — each matched to the site's actual defenses.
+- **Six sources, four fetch strategies** — pure REST, static table parsing, headless Playwright, and a stealth (`nodriver`) browser — each matched to the site's actual defenses.
 - **Diff on every run.** A first-seen registry means each run surfaces only newly posted calls, not the whole haystack.
 - **Fault-isolated stages.** If one site is down or blocks you, that stage is skipped and the rest still produce output.
 - **Relevance tagging.** Two editable regexes score each CFP (`★★` / `★`) against your target journals and topics.
@@ -35,7 +35,7 @@ STAGE            SOURCE                       FETCH STRATEGY
 ─────────────────────────────────────────────────────────────────────────
 tandf            Taylor & Francis             WordPress REST API (no browser)
 cfplist          cfplist.com                  Playwright, headless
-sciencedirect    ScienceDirect                Playwright, headed + DOM capture
+sciencedirect    ScienceDirect                nodriver (PerimeterX-stealth)
 sage             SAGE journals                nodriver (Cloudflare-stealth)
 watchlist        INFORMS · OUP · Cambridge    nodriver, template-driven
 aclweb           ACL Portal (NLP venues)      requests (static sortable table)
@@ -44,13 +44,13 @@ master           →  normalize → dedupe (URL key) → relevance-tag → diff
                  →  CFP_master.xlsx   +   cfp_snapshot.json
 ```
 
-Each publisher got the **minimum** machinery it required — escalating only when a simpler approach failed:
+Each source got the **minimum** machinery it required — escalating only when a simpler approach failed:
 
 | Source | Tech encountered | Strategy |
 |---|---|---|
 | Taylor & Francis | Slow, stateful listing UI | Discovered the underlying **WP REST API** → plain pagination, no browser. Zero missing fields. |
 | cfplist.com | AJAX pagination (URL params ignored) | Headless Playwright click-through. |
-| ScienceDirect | React SPA, robots-disallowed, bot defense | Headed Playwright + network capture, DOM fallback. |
+| ScienceDirect | React SPA, robots-disallowed, **PerimeterX/HUMAN** bot defense | `nodriver` (shared with SAGE) + JS-rendered pagination. PerimeterX silently blocks automated Chromium without even showing a CAPTCHA, so a stealth browser is required — see notes below. |
 | SAGE (Atypon) | TLS fingerprinting, headless detection, **Cloudflare Turnstile** | `nodriver` + locale-agnostic challenge detection + multi-variant URL discovery. |
 | INFORMS / OUP / Cambridge | Uniform per-journal URL patterns | One config: URL templates + journal codes + auto-discovery fallback. |
 | ACL Portal (NLP venues) | Static sortable HTML table, no bot defense | Plain `requests` + table parse. Chosen over the OpenReview API, which is submission-centric and doesn't expose deadlines. |
@@ -92,11 +92,9 @@ python findcalls.py --skip sciencedirect,sage  # run everything except these
 
 Available stages: `tandf`, `cfplist`, `sciencedirect`, `sage`, `watchlist`, `aclweb`, `master`. Flag priority is per-source flags → `--only` → default (all).
 
-**Two stages open a browser window** and may need a moment of help:
-- `sciencedirect` — press **Enter** in the console once the list has loaded.
-- `sage` — if a Cloudflare checkbox appears, click it in the window (manual clicks work under `nodriver`).
+**Both `sciencedirect` and `sage` open a stealth browser window** (they share one `nodriver` session) and may need a moment of help if a challenge appears — click it in the window; manual clicks work under `nodriver`. ScienceDirect waits for the list to render and paginates on its own, so no manual Enter is needed.
 
-If you miss the timing on ScienceDirect and it collects nothing, the previous good CSV is **kept, not overwritten** — just re-run that one source with `python findcalls.py --sciencedirect`.
+If ScienceDirect collects nothing (blocked or the list didn't render), the previous good CSV is **kept, not overwritten** — just re-run that one source with `python findcalls.py --sciencedirect`.
 
 For an unattended run, use `--skip sciencedirect,sage`.
 
@@ -123,6 +121,7 @@ The pipeline is built so a single flaky source can't sink a run:
 - **Stages are isolated.** If a crawler stage throws, it's logged and skipped; the remaining stages still run and `master` merges whatever sources succeeded.
 - **Empty or corrupt CSVs are tolerated.** The merge reads each source defensively — a missing, zero-byte, header-only, or unparseable CSV is skipped with a warning instead of crashing the merge.
 - **A failed crawl won't clobber good data.** If ScienceDirect collects nothing (e.g. the page didn't load in time), it preserves the existing CSV rather than overwriting it with an empty file — so your last good pull survives and one `--sciencedirect` re-run restores the full index.
+- **Blank pages self-diagnose.** If a paginated stage's first page yields zero items, it prints a live DOM report (link counts, sample hrefs) and dumps the raw HTML to `debug_html/`, so a selector fix is driven by evidence rather than guesswork.
 
 ### Cleaning up
 
@@ -134,7 +133,6 @@ python findcalls.py --delete --yes # skip the confirmation prompt
 
 `--delete` clears the crawl outputs but **keeps `cfp_snapshot.json`**, so your first-seen history stays intact. Use `--delete-all` only when you want a clean slate — the next run will then flag every CFP as new. Both prompt for confirmation unless you pass `--yes`.
 
-
 ## Configuration
 
 Everything you'd want to tune lives near the top of the relevant section in `findcalls.py`:
@@ -144,13 +142,27 @@ Everything you'd want to tune lives near the top of the relevant section in `fin
 
 ## Anti-bot engineering notes
 
-The SAGE stage went through seven iterations. The failure chain is a compact tour of modern bot defense:
+Two of the six sources sit behind commercial bot managers, and each needed a different escalation. These are the most instructive parts of the project.
+
+### SAGE — Cloudflare Turnstile (seven iterations)
+
+A compact tour of modern bot defense:
 
 1. **`requests` + spoofed User-Agent → 403.** The platform fingerprints the TLS handshake; headers are irrelevant.
 2. **Headless Chromium → 403.** The `HeadlessChrome` UA token and `navigator.webdriver` flag give it away.
 3. **Headed Chromium → Cloudflare Turnstile loops forever**, even with a human clicking — Turnstile detects the CDP connection Playwright relies on.
 4. **`nodriver` passes** — but challenge pages are served **in the visitor's locale**, so detection keyed on English strings silently accepted a Korean challenge page as real content. Fix: detect via the `<title>` tag across locales plus challenge-only variables — and *not* via `/cdn-cgi/challenge-platform`, which Cloudflare injects into legitimate pages too.
 5. Final touches: ordinal date parsing ("30th September, 2026"), plural-aware link discovery ("Call**s** for Papers"), and scoping deadline extraction to each entry's nearest container so one section's date doesn't bleed onto every item.
+
+### ScienceDirect — PerimeterX, then three parsing traps
+
+ScienceDirect was originally scraped with headed Playwright, but it kept collecting **zero** items. The fix took three distinct steps — each a reminder that "the browser opened" is not "the scrape worked":
+
+1. **PerimeterX/HUMAN, not Cloudflare.** Elsevier fingerprints automated Chromium and *silently* blocks it — no CAPTCHA checkbox ever appears, so there's nothing for a human to solve; the list simply never renders. Reusing the `nodriver` stealth browser already built for SAGE got past it. (The two stages now share one session.)
+2. **Text-matched "Next" clicked the wrong link.** Finding the pagination button by its visible text (`find("Next")`) matched a **journal named "Next Energy"** in the results and navigated off the listing — back to zero. Fixed by targeting the control via attribute selectors only (`a[aria-label*='next'], a[rel='next']`), never by text, plus an off-page guard that detects navigation away from the list path and recovers.
+3. **`evaluate()` return shapes broke parsing.** `nodriver`'s `tab.evaluate` returns JS results in different shapes across versions (a `dict` vs. a `[value, type]` list), which raised `'list' object has no attribute 'get'`. Fixed by having the injected JS return a **`JSON.stringify(...)` string** and parsing it with `json.loads` on the Python side — version-independent — plus `isinstance` guards so a malformed return degrades gracefully instead of crashing.
+
+Result: a stable ~2,700-item pull, and a `_diagnose()` helper that prints DOM link counts and sample hrefs (and dumps the page HTML) whenever a first page comes back empty — so the next selector break is a five-minute fix, not a mystery.
 
 ## Responsible use
 
@@ -162,7 +174,7 @@ The SAGE stage went through seven iterations. The failure chain is a compact tou
 
 - Some publishers' central listing pages are manually curated and incomplete; per-journal watchlists compensate.
 - Top venues (e.g. *JCR*, *JPR*, *ISQ*, *International Affairs*) run **no open CFPs** by policy — special issues are assembled via guest-editor proposals, so a crawler correctly returns nothing there. Reach these through regular submission, or by proposing a themed issue yourself.
-- Site markup and `cf_clearance` cookies change; expect occasional selector maintenance. Every stage dumps raw HTML to `debug_html/` for any page it can't parse, so fixes are diff-driven rather than guesswork.
+- Commercial bot managers and site markup change over time; expect occasional selector or challenge-detection maintenance. Paginated stages self-diagnose on empty pages and dump raw HTML to `debug_html/`, so fixes are evidence-driven.
 - NLP conferences increasingly run on **ACL Rolling Review** (submit to ARR, then commit to a venue), so the `aclweb` stage captures posted CFP deadlines rather than the full two-step ARR cycle. For live ARR-round countdowns, the community site [aideadlin.es](https://aideadlin.es/?sub=NLP) with its `.ics` export is a good complement.
 
 ## Roadmap

@@ -18,7 +18,7 @@ FindCalls — 올인원 실행 파일
 스테이지 (실행 순서):
   tandf         T&F WordPress REST API   (브라우저 불필요, ~1분)
   cfplist       cfplist.com              (Playwright, 자동)
-  sciencedirect ScienceDirect            (Playwright 창 + Enter 1회)
+  sciencedirect ScienceDirect            (nodriver 창, PerimeterX 우회)
   sage          SAGE 중앙+저널           (nodriver 창, Cloudflare 수동클릭 가능)
   watchlist     INFORMS/OUP/Cambridge    (nodriver, sage와 브라우저 공유)
   aclweb        ACL Portal(NLP 학회/워크숍) (requests, 정적 테이블)
@@ -164,6 +164,162 @@ class NoDriverFetcher:
 
     def get(self, url, ok404=False):
         return self._loop.run_until_complete(self._fetch(url, ok404))
+
+    # ── JS 렌더링 + 페이지네이션 목록 수집 (ScienceDirect용) ──────────
+    async def _eval_json(self, tab, js):
+        """tab.evaluate 반환 형식이 nodriver 버전마다 달라(dict/list/str)
+        오류가 나므로, JS가 JSON 문자열을 반환하게 하고 여기서 파싱한다."""
+        import json
+        try:
+            raw = await tab.evaluate(js, await_promise=False)
+        except Exception as e:
+            return None, f"evaluate 예외: {type(e).__name__}"
+        if raw is None:
+            return None, "None 반환"
+        # nodriver가 [value, type] 형태로 감싸 줄 때가 있음 → 첫 원소가 문자열
+        if isinstance(raw, (list, tuple)) and raw:
+            raw = raw[0]
+        if isinstance(raw, (dict, list)):
+            return raw, None          # 이미 파싱된 객체면 그대로
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw), None
+            except Exception:
+                return raw, "JSON 파싱 실패"
+        return raw, f"예상외 타입 {type(raw).__name__}"
+
+    async def _paginate_collect(self, url, item_selector, next_selector,
+                                max_pages, page_wait):
+        """URL을 열고 챌린지 통과 후 item_selector 링크를 페이지마다 수집,
+        next_selector(CSS)로 특정한 'Next' 버튼을 클릭해 넘긴다.
+        ※ 텍스트('Next')로 버튼을 찾으면 'Next Energy' 저널명 링크를 잘못
+          클릭하는 문제가 있어 aria-label/rel 속성 CSS로만 특정한다."""
+        tab = await self._browser.get(url)
+        await asyncio.sleep(2.0)
+        ok = await self._wait_challenge(tab)
+        if not ok:
+            print(f"  차단 지속: {url[:75]}")
+            return []
+        print("  목록 로딩 대기 중... (PerimeterX 통과 확인)")
+
+        base_path = urlparse(url).path
+        all_items, seen = [], set()
+        diagnosed = False
+        for pg in range(1, max_pages + 1):
+            await asyncio.sleep(page_wait)
+
+            # 목록 이탈 감지 (저널 링크 오클릭 방지)
+            cur, _ = await self._eval_json(
+                tab, "JSON.stringify(window.location.pathname)")
+            if isinstance(cur, str) and base_path not in cur:
+                print(f"  목록 이탈 감지({cur}) — 목록으로 복귀")
+                tab = await self._browser.get(url)
+                await asyncio.sleep(page_wait)
+
+            # 항목 링크 추출 (JSON 문자열로 반환받아 파싱)
+            js_items = (
+                "JSON.stringify(Array.from(document.querySelectorAll('%s'))"
+                ".map(a => {const c=a.closest('li,article,div');"
+                "return {href:a.href, text:(a.innerText||'').trim(),"
+                "cardText: c?(c.innerText||''):''};})"
+                ".filter(x => x.text))" % item_selector.replace("'", "\\'"))
+            items, err = await self._eval_json(tab, js_items)
+            if not isinstance(items, list):
+                items = []
+            new_n = 0
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                key = it.get("href") or it.get("text")
+                if key and key not in seen:
+                    seen.add(key)
+                    all_items.append(it)
+                    new_n += 1
+            print(f"  페이지 {pg}: +{new_n}건 (누적 {len(all_items)})"
+                  + (f"  [추출오류: {err}]" if err else ""))
+
+            # 첫 페이지가 0건이면 실제 DOM을 진단 출력 (셀렉터 교정용)
+            if new_n == 0 and pg == 1 and not diagnosed:
+                diagnosed = True
+                await self._diagnose(tab, url)
+
+            # 'Next' 버튼: CSS로만 특정, 비활성이면 종료
+            js_nav = (
+                "JSON.stringify((()=>{const el=document.querySelector('%s');"
+                "if(!el)return{found:false};"
+                "const d=el.getAttribute('aria-disabled')==='true'"
+                "||el.hasAttribute('disabled')"
+                "||(el.className||'').toLowerCase().includes('disabled');"
+                "el.scrollIntoView({block:'center'});"
+                "return{found:true,disabled:d};})())"
+                % next_selector.replace("'", "\\'"))
+            nav, _ = await self._eval_json(tab, js_nav)
+            if not isinstance(nav, dict) or not nav.get("found"):
+                print("  다음 페이지 버튼 없음 — 종료")
+                break
+            if nav.get("disabled"):
+                print("  마지막 페이지 도달")
+                break
+
+            clicked = False
+            try:
+                el = await tab.select(next_selector, timeout=5)
+            except Exception:
+                el = None
+            if el:
+                try:
+                    await el.click()
+                    clicked = True
+                except Exception:
+                    try:
+                        await el.apply("(e) => e.click()")
+                        clicked = True
+                    except Exception:
+                        pass
+            if not clicked:
+                print("  다음 페이지 버튼 클릭 실패 — 종료")
+                break
+        return all_items
+
+    async def _diagnose(self, tab, url):
+        """0건일 때 페이지 상태를 출력해 셀렉터/렌더링 문제를 진단."""
+        info, _ = await self._eval_json(tab, (
+            "JSON.stringify({"
+            "path:location.pathname,"
+            "title:document.title.slice(0,80),"
+            "totalLinks:document.querySelectorAll('a').length,"
+            "special:document.querySelectorAll(\"a[href*='special-issue']\").length,"
+            "callLinks:document.querySelectorAll(\"a[href*='call']\").length,"
+            "sample:Array.from(document.querySelectorAll('a[href]'))"
+            ".slice(0,8).map(a=>a.getAttribute('href')).filter(Boolean)"
+            "})"))
+        print("  ── 진단 정보 ──")
+        if isinstance(info, dict):
+            print(f"    경로: {info.get('path')}")
+            print(f"    제목: {info.get('title')}")
+            print(f"    전체 링크 수: {info.get('totalLinks')}, "
+                  f"special-issue: {info.get('special')}, "
+                  f"call: {info.get('callLinks')}")
+            print(f"    링크 샘플: {info.get('sample')}")
+        else:
+            print(f"    진단 실패, 원시값: {str(info)[:200]}")
+        # 원본 HTML도 백업 (오프라인 분석용)
+        try:
+            html = await tab.get_content()
+            dump_debug("sciencedirect_page1", html)
+            print("    debug_html/sciencedirect_page1.html 저장됨")
+        except Exception:
+            pass
+        print("  ───────────────")
+
+    def paginate_collect(self, url, item_selector,
+                         next_selector="a[aria-label*='next' i],"
+                                        "button[aria-label*='next' i],"
+                                        "a[rel='next'],li.pagination-next a",
+                         max_pages=100, page_wait=3.0):
+        return self._loop.run_until_complete(
+            self._paginate_collect(url, item_selector, next_selector,
+                                   max_pages, page_wait))
 
     def close(self):
         try:
@@ -352,54 +508,29 @@ def stage_cfplist():
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 스테이지 3: ScienceDirect (Playwright headed — DOM 전략 이식)
+# 스테이지 3: ScienceDirect (nodriver — PerimeterX/HUMAN 우회)
+#   Elsevier는 Cloudflare가 아니라 PerimeterX(HUMAN)를 사용. 자동화
+#   브라우저(Playwright Chromium)를 감지하면 CAPTCHA조차 띄우지 않고
+#   조용히 차단함(체크박스가 안 뜨는 증상의 원인). → SAGE에서 검증된
+#   nodriver 스택을 재사용하고, JS 렌더링 목록을 페이지네이션으로 수집.
 # ═══════════════════════════════════════════════════════════════════════
 def stage_sciencedirect():
-    from playwright.sync_api import sync_playwright
     URL = "https://www.sciencedirect.com/browse/calls-for-papers"
-    rows = []
-    with sync_playwright() as p:
-        b = p.chromium.launch(headless=False)
-        page = b.new_context(viewport={"width": 1400, "height": 900})\
-                .new_page()
-        page.goto(URL, wait_until="domcontentloaded", timeout=60000)
-        input("  브라우저에서 목록이 정상 표시되면 Enter "
-              "(차단 페이지가 뜨면 통과 후 Enter): ")
-        for pg in range(1, 101):
-            time.sleep(3.0)
-            try:
-                items = page.eval_on_selector_all(
-                    "a[href*='call' i], a[href*='special-issue' i]",
-                    """els => els.map(a => ({
-                        href: a.href, text: a.innerText.trim(),
-                        cardText: a.closest('li,article,div') ?
-                                  a.closest('li,article,div').innerText : ''
-                    }))""")
-                rows += [it for it in items if it["text"]]
-            except Exception as e:
-                print(f"  DOM 파싱 경고: {e}")
-            nxt = page.locator(
-                "a[aria-label*='next' i], button[aria-label*='next' i], "
-                "a:has-text('Next'), button:has-text('Next')").first
-            try:
-                if nxt.is_visible(timeout=3000):
-                    if nxt.get_attribute("aria-disabled") == "true":
-                        print("  마지막 페이지 도달")
-                        break
-                    nxt.click()
-                    page.wait_for_load_state("networkidle", timeout=30000)
-                    print(f"  페이지 {pg + 1}로 이동")
-                else:
-                    break
-            except Exception:
-                break
-        b.close()
+    f = NoDriverFetcher.shared()
+    items = f.paginate_collect(
+        URL,
+        item_selector="a[href*='special-issue'], a[href*='call']",
+        next_selector="a[aria-label*='next' i], button[aria-label*='next' i],"
+                      " a[rel='next']",
+        max_pages=100,
+        page_wait=3.0)
+    rows = [it for it in items if it.get("text")]
     df = pd.DataFrame(rows)
     if not df.empty:
         df = df.drop_duplicates(subset=["href"])
     if df.empty:
-        # 0건 수집(로드 타이밍 놓침/차단 등): 기존 정상 CSV를 덮어쓰지 않는다.
-        # 빈 파일을 남기면 이후 master가 EmptyDataError로 실패하기 때문.
+        # 0건: 차단이 지속되거나 목록이 로드되지 않은 경우.
+        # 기존 정상 CSV를 덮어쓰지 않는다(빈 파일 → master EmptyDataError 방지).
         print("  [경고] ScienceDirect 0건 수집 — 기존 CSV를 보존하고 "
               "저장을 건너뜁니다. (--sciencedirect 로 재시도하세요)")
         return
@@ -1078,7 +1209,7 @@ def stage_delete(include_snapshot=False, assume_yes=False):
 STAGES = [
     ("tandf", stage_tandf, "Taylor & Francis (REST API)"),
     ("cfplist", stage_cfplist, "cfplist.com (Playwright)"),
-    ("sciencedirect", stage_sciencedirect, "ScienceDirect (Playwright 창)"),
+    ("sciencedirect", stage_sciencedirect, "ScienceDirect (nodriver 창, PerimeterX)"),
     ("sage", stage_sage, "SAGE (nodriver 창)"),
     ("watchlist", stage_watchlist, "INFORMS/OUP/Cambridge (nodriver)"),
     ("aclweb", stage_aclweb, "ACL Portal (NLP 학회/워크숍, requests)"),
